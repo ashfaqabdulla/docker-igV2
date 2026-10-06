@@ -1,0 +1,5 @@
+# One reel URL per line. Lines starting with # are ignored.
+# Both forms work:
+#   https://www.instagram.com/reel/SHORTCODE/
+#   https://www.instagram.com/USERNAME/reel/SHORTCODE/
+https://www.instagram.com/reel/DdPARTIoW65/

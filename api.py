@@ -3,21 +3,17 @@ api.py - HTTP API wrapper around ig_scrap.run_fetch().
 
 Endpoints
 ---------
-  GET  /health          Liveness probe. Also checks the Chrome CDP endpoint.
-  GET  /session         Reports the session file status.
+  GET  /health          Liveness + Chrome + session status.
+  GET  /session         Session file status only.
   POST /fetch           Fetch metrics for a list of reel URLs.
-                        Body: {"urls": [...], "batch_size": 10, "pool_size": 10}
-                        Returns the same rows the CLI writes to CSV.
 
 Runs in the same image as the scraper container, using the same session
 file and Chrome container. Different entrypoint (uvicorn vs. python).
 """
-import asyncio
 import csv
 import json
 import os
 import time
-from dataclasses import asdict
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -28,16 +24,11 @@ import ig_scrap as core
 app = FastAPI(title="ig-reel API", version="1.0")
 
 
-# ---------------------------------------------------------------------------
-# Request / response models
-# ---------------------------------------------------------------------------
-
 class FetchRequest(BaseModel):
-    urls: list[str] = Field(..., min_length=1,
-                            description="One or more Instagram reel URLs.")
+    urls: list[str] = Field(..., min_length=1)
     batch_size: int = Field(10, ge=1, le=50)
     pool_size: int = Field(10, ge=1, le=20)
-    session: bool = Field(True, description="Use the saved session.")
+    session: bool = Field(True)
 
 
 class FetchResponse(BaseModel):
@@ -47,13 +38,8 @@ class FetchResponse(BaseModel):
     rows: list[dict]
 
 
-# ---------------------------------------------------------------------------
-# Shared helpers
-# ---------------------------------------------------------------------------
-
 def _make_config(req: FetchRequest | None = None,
                   session_on: bool = True) -> core.Config:
-    """Build a core.Config from env vars and (optionally) request fields."""
     return core.Config(
         state=os.environ.get("IG_STATE", "ig_state.json"),
         headless=True,
@@ -69,16 +55,8 @@ def _make_config(req: FetchRequest | None = None,
     )
 
 
-# ---------------------------------------------------------------------------
-# Endpoints
-# ---------------------------------------------------------------------------
-
 @app.get("/health")
 async def health():
-    """
-    Liveness + readiness in one. Reports whether Chrome is reachable
-    and whether the session file is present.
-    """
     cdp = os.environ.get("IG_CDP_URL")
     chrome_ok = False
     chrome_info = None
@@ -105,7 +83,6 @@ async def health():
 
 @app.get("/session")
 async def session_status():
-    """Just the session file status, without probing Chrome."""
     state = os.environ.get("IG_STATE", "ig_state.json")
     sid, err = core.state_file_ok(state)
     if err:
@@ -120,18 +97,9 @@ async def session_status():
 
 @app.post("/fetch", response_model=FetchResponse)
 async def fetch(req: FetchRequest):
-    """
-    Fetch metrics for the provided URLs. Runs the full three-phase
-    pipeline. Blocks until done and returns the rows.
-
-    For a 68-reel file with defaults, expect ~10s. For much larger
-    inputs, use the async job pattern (see README) or cap `urls` at a
-    reasonable size.
-    """
     cfg = _make_config(req, session_on=req.session)
 
     if cfg.session_on and not cfg.cdp_url:
-        # In API mode we always expect CDP.
         raise HTTPException(500, "IG_CDP_URL is not set; API requires CDP mode.")
 
     t0 = time.time()
@@ -142,7 +110,6 @@ async def fetch(req: FetchRequest):
     except core.SessionExpired as e:
         raise HTTPException(401, f"Session expired: {e}")
 
-    # Persist artifacts just like the CLI does.
     if rows:
         out_dir = Path(cfg.out_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -161,7 +128,7 @@ async def fetch(req: FetchRequest):
         count=len(rows),
         expired=expired,
         elapsed_seconds=round(time.time() - t0, 2),
-        rows=[asdict(r) if hasattr(r, "__dataclass_fields__") else r for r in rows],
+        rows=rows,
     )
 
 

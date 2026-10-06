@@ -1,0 +1,244 @@
+{
+  "info": {
+    "_postman_id": "b7e8a1c4-2f5d-4e9a-8c3b-6d2f1a9e4b7c",
+    "name": "ig-reel",
+    "description": "Instagram reel metrics scraper API. Requires SSH tunnel on 127.0.0.1:8099 or a direct URL.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Health",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/health",
+          "host": ["{{base_url}}"],
+          "path": ["health"]
+        },
+        "description": "Liveness + readiness. Reports Chrome reachability and session validity."
+      },
+      "response": []
+    },
+    {
+      "name": "Session",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/session",
+          "host": ["{{base_url}}"],
+          "path": ["session"]
+        },
+        "description": "Session file status only. Does not probe Chrome."
+      },
+      "response": []
+    },
+    {
+      "name": "Fetch - single reel",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"urls\": [\n    \"https://www.instagram.com/reel/DdPARTIoW65/\"\n  ]\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{base_url}}/fetch",
+          "host": ["{{base_url}}"],
+          "path": ["fetch"]
+        },
+        "description": "Fetch metrics for one reel. Uses default batch_size=10, pool_size=10, session=true."
+      },
+      "response": []
+    },
+    {
+      "name": "Fetch - multiple reels",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"urls\": [\n    \"https://www.instagram.com/reel/DdPARTIoW65/\",\n    \"https://www.instagram.com/reel/DdmAv74Cv3_/\",\n    \"https://www.instagram.com/reel/DcgX9eAh27h/\",\n    \"https://www.instagram.com/kyliejenner/reel/Dd_oMDgu6Xd/\"\n  ],\n  \"batch_size\": 10,\n  \"pool_size\": 10,\n  \"session\": true\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{base_url}}/fetch",
+          "host": ["{{base_url}}"],
+          "path": ["fetch"]
+        },
+        "description": "Fetch multiple reels with explicit batch and pool sizes. URLs with and without username in path are both accepted."
+      },
+      "response": []
+    },
+    {
+      "name": "Fetch - bulk from file",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"urls\": {{reels_json}},\n  \"batch_size\": 10,\n  \"pool_size\": 10,\n  \"session\": true\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{base_url}}/fetch",
+          "host": ["{{base_url}}"],
+          "path": ["fetch"]
+        },
+        "description": "Bulk fetch. Set the reels_json environment variable to a JSON array of URLs, e.g. [\"https://...\",\"https://...\"]. Useful for large lists built outside Postman."
+      },
+      "response": []
+    },
+    {
+      "name": "Fetch - production tuning",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"urls\": [\n    \"https://www.instagram.com/reel/DdPARTIoW65/\"\n  ],\n  \"batch_size\": 10,\n  \"pool_size\": 10,\n  \"session\": true\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{base_url}}/fetch",
+          "host": ["{{base_url}}"],
+          "path": ["fetch"]
+        },
+        "description": "Recommended tuning for 68+ reels: batch_size=10, pool_size=10. Fastest observed configuration."
+      },
+      "response": []
+    }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Runs before every request in the collection.",
+          "// Optional: warn if the base_url looks wrong.",
+          "const base = pm.environment.get('base_url') || pm.collectionVariables.get('base_url');",
+          "if (!base) {",
+          "    console.warn('base_url is not set. Set it in the environment or collection variables.');",
+          "}",
+          "if (!/^https?:\\/\\//.test(base)) {",
+          "    console.warn('base_url should start with http:// or https://');",
+          "}"
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Runs after every request.",
+          "// Basic sanity checks that produce red/green in the Postman runner.",
+          "if (pm.response.code === 200) {",
+          "    pm.test('status 200', () => pm.response.to.have.status(200));",
+          "}",
+          "",
+          "// For /health: assert ok === true",
+          "if (pm.request.url.path.includes('health')) {",
+          "    pm.test('health ok', () => {",
+          "        const body = pm.response.json();",
+          "        pm.expect(body.ok).to.eql(true);",
+          "        pm.expect(body.chrome.reachable).to.eql(true);",
+          "        pm.expect(body.session.valid).to.eql(true);",
+          "    });",
+          "}",
+          "",
+          "// For /fetch: assert rows returned and not expired",
+          "if (pm.request.url.path.includes('fetch')) {",
+          "    pm.test('fetch returned rows', () => {",
+          "        const body = pm.response.json();",
+          "        pm.expect(body.count).to.be.above(0);",
+          "        pm.expect(body.expired).to.eql(false);",
+          "        pm.expect(body.rows).to.be.an('array');",
+          "    });",
+          "    pm.test('fetch completed in < 60s', () => {",
+          "        const body = pm.response.json();",
+          "        pm.expect(body.elapsed_seconds).to.be.below(60);",
+          "    });",
+          "}"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8099",
+      "type": "string"
+    },
+    {
+      "key": "reels_json",
+      "value": "[]",
+      "type": "string"
+    }
+  ]
+}

@@ -1,5 +1,5 @@
 """
-ig-scrapV4.py - Instagram reel metrics via login session + API-first fetch.
+ig_scrap.py - Instagram reel metrics via login session + API-first fetch.
 
 Commands
 --------
@@ -30,9 +30,8 @@ Browser modes
   CDP mode (--cdp-url http://host:9222 or IG_CDP_URL env var)
       Script attaches to a Chrome already running with
       --remote-debugging-port. Creates a FRESH browser context and
-      injects ig_state.json as storage_state, so the remote Chrome
-      never needs to be logged in itself. The browser is not closed on
-      exit -- only the tabs we opened are closed.
+      injects ig_state.json as storage_state. The browser is not closed
+      on exit -- only the tabs we opened are closed.
 
 Fetch pipeline
 --------------
@@ -63,10 +62,6 @@ from pathlib import Path
 
 from playwright.async_api import async_playwright
 
-# ---------------------------------------------------------------------------
-# Metric fields and defaults
-# ---------------------------------------------------------------------------
-
 FIELDS = (
     "play_count", "ig_play_count", "fb_play_count", "view_count",
     "video_view_count", "video_play_count",
@@ -89,9 +84,8 @@ API_CALL_TIMEOUT_MS = 8000
 
 SHORTCODE_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
 
-# Headless Chrome self-identifies as "HeadlessChrome" in its UA string,
-# which Instagram's bot detection flags more often than a real Chrome UA.
-# Override with this. Bump the version occasionally.
+# Headless Chrome reports "HeadlessChrome" in its UA. Override to a real
+# Chrome UA so Instagram's bot detection is less suspicious.
 CHROME_UA = (
     "Mozilla/5.0 (X11; Linux x86_64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -120,7 +114,7 @@ class SessionExpired(Exception):
 
 
 # ---------------------------------------------------------------------------
-# Small helpers
+# Helpers
 # ---------------------------------------------------------------------------
 
 def now():
@@ -135,7 +129,6 @@ def epoch_iso(v):
 
 
 def shortcode_to_media_id(code: str) -> str:
-    """Decode an Instagram shortcode (base64-ish) into the numeric media ID."""
     n = 0
     for c in code:
         n = n * 64 + SHORTCODE_ALPHABET.index(c)
@@ -147,10 +140,6 @@ def clean(url):
 
 
 def parse(url):
-    """
-    Extract (shortcode, username_or_None). Username is None for URLs like
-    instagram.com/reel/{code}/ -- the API response supplies the owner.
-    """
     m = re.search(r"/(?:reel|reels|p|tv)/([A-Za-z0-9_-]+)", url)
     if not m:
         return None, None
@@ -159,7 +148,6 @@ def parse(url):
 
 
 def walk(o):
-    """Iteratively yield every dict with a 'code' key. No recursion."""
     stack = [o]
     while stack:
         item = stack.pop()
@@ -180,7 +168,6 @@ def read_urls(path):
 
 
 def state_file_ok(path):
-    """Return (sessionid_cookie, None) if usable, else (None, error)."""
     p = Path(path)
     if not p.exists():
         return None, "no session file"
@@ -199,11 +186,6 @@ def _has_views(rec):
 
 
 def _is_top_media(o):
-    """
-    True for top-level media objects: they have `code` and `user` at the
-    same level. Filters out nested objects that carry a `code` (coauthor
-    entries, related media) so their user field can't corrupt the owner.
-    """
     return "code" in o and isinstance(o.get("user"), dict)
 
 
@@ -212,7 +194,6 @@ def _is_top_media(o):
 # ---------------------------------------------------------------------------
 
 async def launch(p, headless):
-    """Prefer real Chrome if installed; fall back to bundled Chromium."""
     try:
         return await p.chromium.launch(channel="chrome", headless=headless)
     except Exception:
@@ -221,24 +202,11 @@ async def launch(p, headless):
 
 @asynccontextmanager
 async def browser_context(cfg, use_session):
-    """
-    Yield a browser context.
-
-    CDP mode: attach to a running Chrome, create a FRESH context with
-    ig_state.json injected via storage_state. The remote Chrome never
-    needs to be logged in itself. The browser is not closed on exit.
-
-    Launch mode: start a fresh browser, load ig_state.json if requested,
-    and write back rotated cookies on exit (but only if still logged in).
-    """
-    # ------------------------------------------------------------------
-    # CDP mode
-    # ------------------------------------------------------------------
     if cfg.cdp_url:
         if use_session:
             sid, err = state_file_ok(cfg.state)
             if err:
-                sys.exit(f"{err}: run  python ig-scrapV4.py login  first.")
+                sys.exit(f"{err}: run  python ig_scrap.py login  first.")
 
         async with async_playwright() as p:
             try:
@@ -247,9 +215,6 @@ async def browser_context(cfg, use_session):
                 print(f"Could not connect to CDP at {cfg.cdp_url}: {e}")
                 sys.exit(2)
 
-            # Fresh context, not the browser's default, so we can inject
-            # ig_state.json as storage_state. The UA override hides that
-            # we're running headless Chrome in a container.
             kwargs = {"locale": "en-US", "user_agent": CHROME_UA}
             if use_session:
                 kwargs["storage_state"] = cfg.state
@@ -269,16 +234,12 @@ async def browser_context(cfg, use_session):
                     await ctx.close()
                 except Exception:
                     pass
-            # Do NOT close the browser -- it belongs to another container.
         return
 
-    # ------------------------------------------------------------------
-    # Launch mode
-    # ------------------------------------------------------------------
     if use_session:
         sid, err = state_file_ok(cfg.state)
         if err:
-            sys.exit(f"{err}: run  python ig-scrapV4.py login  first.")
+            sys.exit(f"{err}: run  python ig_scrap.py login  first.")
 
     async with async_playwright() as p:
         browser = await launch(p, cfg.headless)
@@ -303,7 +264,6 @@ async def browser_context(cfg, use_session):
 
 
 def check_session_url(page, session_on):
-    """Raise SessionExpired if a session page has been bounced to login/challenge."""
     if session_on:
         u = page.url
         if "/accounts/login" in u or "/challenge" in u:
@@ -316,12 +276,6 @@ def check_session_url(page, session_on):
 
 async def capture(ctx, url, on_obj, *, max_scrolls=0, done=lambda: False,
                   session_on=False, wait_for_grid=True):
-    """
-    Open `url`, feed every JSON object with a 'code' to `on_obj`, and
-    optionally scroll. Workers drain a queue so we don't accumulate one
-    task per response. wait_for_grid=False skips the 25s selector wait
-    used by grid pages (reel pages don't need it).
-    """
     queue: asyncio.Queue = asyncio.Queue()
     seen = set()
 
@@ -391,11 +345,6 @@ async def capture(ctx, url, on_obj, *, max_scrolls=0, done=lambda: False,
 
 
 def _absorb(rec, o, *, allow_username=False):
-    """
-    Merge metric fields from `o` into `rec`. Only pass allow_username=True
-    when `o` is the top-level media object; nested objects frequently
-    carry a `user` for tagged users or co-authors.
-    """
     for k in FIELDS:
         if o.get(k) is not None:
             rec[k] = o[k]
@@ -406,10 +355,6 @@ def _absorb(rec, o, *, allow_username=False):
 
 
 async def _make_warm_page(ctx, session_on):
-    """
-    Create one page and load the Instagram homepage so it has a live
-    origin. Used by warm_pages to build the pool in parallel.
-    """
     p = await ctx.new_page()
     try:
         await p.goto("https://www.instagram.com/",
@@ -421,23 +366,11 @@ async def _make_warm_page(ctx, session_on):
 
 
 async def warm_pages(ctx, n, session_on):
-    """
-    Create n warm pages in parallel. Each does its own Instagram homepage
-    load; running them concurrently drops the pool-build cost from
-    ~1.5s per page to ~1.5s total.
-
-    In CDP mode these become tabs in your running Chrome.
-    """
     return await asyncio.gather(*[_make_warm_page(ctx, session_on)
                                   for _ in range(n)])
 
 
 async def scrape_reels_api_batch(page, codes, got_map, session_on):
-    """
-    One page round-trip, N parallel fetches inside the browser. Each fetch
-    has its own AbortController so a slow reel can't stall the batch.
-    Returns the set of codes that resolved to at least one view field.
-    """
     reqs = [
         {
             "code": c,
@@ -501,7 +434,6 @@ async def scrape_reels_api_batch(page, codes, got_map, session_on):
 
 
 async def scrape_reel(ctx, code, got, session_on):
-    """Visit one reel page and absorb every metric + owner username."""
     def on_obj(o):
         if o.get("code") == code:
             _absorb(got, o, allow_username=_is_top_media(o))
@@ -511,10 +443,6 @@ async def scrape_reel(ctx, code, got, session_on):
 
 
 async def scrape_user(ctx, user, codes, got, cfg, session_on):
-    """
-    Fill `got` {code: fields} for the wanted codes by scanning the user's
-    grids. Reels tab first, then main grid, each up to two attempts.
-    """
     want = set(codes)
 
     def on_obj(o):
@@ -542,17 +470,11 @@ async def scrape_user(ctx, user, codes, got, cfg, session_on):
 # ---------------------------------------------------------------------------
 
 async def run_fetch(urls, concurrency, use_session, cfg):
-    """
-    Orchestrate the whole fetch. Returns (rows, session_expired_flag).
-    The API batch runs first on every reel; the API response supplies the
-    owner username in the same call.
-    """
     if use_session and concurrency > cfg.session_concurrency:
         print(f"(session mode: concurrency lowered to {cfg.session_concurrency} "
               f"to protect the account)")
         concurrency = cfg.session_concurrency
 
-    # ---- Parse and de-duplicate input URLs ---------------------------------
     items, skipped, seen_codes = [], [], set()
     for raw in urls:
         url = clean(raw.strip())
@@ -577,7 +499,6 @@ async def run_fetch(urls, concurrency, use_session, cfg):
     t0 = time.time()
 
     def _emit(code, *, force=False):
-        """Print progress for `code`, once. Deferred unless force=True."""
         if code in reported:
             return
         got = by_code.get(code, ({}, None))[0]
@@ -594,9 +515,6 @@ async def run_fetch(urls, concurrency, use_session, cfg):
     async with browser_context(cfg, use_session) as ctx:
         pages = []
         try:
-            # ------------------------------------------------------------
-            # Phase 1: API batch on ALL reels
-            # ------------------------------------------------------------
             batches = [items[i:i + cfg.batch_size]
                        for i in range(0, len(items), cfg.batch_size)]
             print(f"\nphase 1: {len(items)} reel(s) via "
@@ -639,9 +557,6 @@ async def run_fetch(urls, concurrency, use_session, cfg):
 
             await asyncio.gather(*[api_batch(b) for b in batches])
 
-            # ------------------------------------------------------------
-            # Phase 2: resolve owners for reels the API missed (bare URLs only)
-            # ------------------------------------------------------------
             if not state["abort"]:
                 no_owner = [
                     i for i in items
@@ -679,9 +594,6 @@ async def run_fetch(urls, concurrency, use_session, cfg):
 
                     await asyncio.gather(*[resolve_owner(i) for i in no_owner])
 
-            # ------------------------------------------------------------
-            # Phase 3: grid fallback for anything still missing views
-            # ------------------------------------------------------------
             if not state["abort"]:
                 missing = [
                     i for i in items
@@ -737,7 +649,6 @@ async def run_fetch(urls, concurrency, use_session, cfg):
                 except Exception:
                     pass
 
-    # ---- Build output rows ------------------------------------------------
     rows = []
     for i in items:
         got, at = by_code.get(i["code"], ({}, None))
@@ -802,18 +713,10 @@ def print_rows(rows):
 # ---------------------------------------------------------------------------
 
 def cmd_login(cfg):
-    """
-    Open a real Chrome window, let the user log in by hand, then save the
-    cookies to ig_state.json. This is the only place a login page is
-    touched; the script never sees a password.
-
-    In CDP mode this command is a no-op: the browser is already running,
-    so you log in there instead.
-    """
     if cfg.cdp_url:
         print(f"CDP mode: you're attached to {cfg.cdp_url}.")
         print("Log in directly in that Chrome window. ig_state.json is not used.")
-        print(f"Then run:  python ig-scrapV4.py check --cdp-url {cfg.cdp_url}")
+        print(f"Then run:  python ig_scrap.py check --cdp-url {cfg.cdp_url}")
         return
 
     from playwright.sync_api import sync_playwright
@@ -845,19 +748,14 @@ def cmd_login(cfg):
                                                    time.gmtime(sid["expires"])))
     print("Reminder: ig_state.json is as sensitive as a password. "
           "Do not share or commit it.")
-    print("Next:  python ig-scrapV4.py check")
+    print("Next:  python ig_scrap.py check")
 
 
 def cmd_check(cfg):
-    """
-    Verify the session. In CDP mode we skip the ig_state.json read for
-    the local check (the running browser holds the cookies) but still
-    inject the state file into the CDP context when probing.
-    """
     if not cfg.cdp_url:
         sid, err = state_file_ok(cfg.state)
         if err:
-            print(f"Session: {err}. Run  python ig-scrapV4.py login  first.")
+            print(f"Session: {err}. Run  python ig_scrap.py login  first.")
             sys.exit(1)
         exp = sid.get("expires", -1)
         if exp and exp > 0:
@@ -891,14 +789,13 @@ def cmd_check(cfg):
             print("Log into Instagram in the running Chrome window, then "
                   "run check again.")
         else:
-            print("Run  python ig-scrapV4.py login  again. If you see a "
+            print("Run  python ig_scrap.py login  again. If you see a "
                   "challenge, approve it in the Instagram app.")
         sys.exit(1)
     print("RESULT: session is VALID.")
 
 
 def cmd_fetch(cfg, file):
-    """Run a fetch and write the results as CSV + JSON into cfg.out_dir."""
     urls = read_urls(file)
     rows, expired = asyncio.run(run_fetch(urls, cfg.concurrency, cfg.session_on, cfg))
     print()
@@ -923,7 +820,6 @@ def cmd_fetch(cfg, file):
 
 
 def cmd_compare(cfg, file):
-    """Run logged-out vs session side-by-side."""
     urls = read_urls(file)
     print("=== run 1: logged out ===")
     if cfg.cdp_url:
@@ -975,7 +871,7 @@ def main():
                         help="hide the browser window (launch mode only)")
     common.add_argument("--cdp-url", default=None,
                         help="attach to a running Chrome via CDP "
-                             "(e.g. http://ig-reel-chrome:9222); implies "
+                             "(e.g. http://127.0.0.1:9222); implies "
                              "session mode. Falls back to IG_CDP_URL env var.")
     common.add_argument("--timeout", type=int, default=DEFAULT_ACCOUNT_TIMEOUT,
                         help=f"per-account timeout in seconds "
@@ -995,7 +891,7 @@ def main():
     common.add_argument("--out-dir", default="out",
                         help="directory for CSV/JSON output (default out)")
 
-    ap = argparse.ArgumentParser(description="Instagram login-session test tool")
+    ap = argparse.ArgumentParser(description="Instagram reel metrics scraper")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("login", parents=[common],
                    help="log in by hand once and save the session")
@@ -1015,18 +911,14 @@ def main():
 
     args = ap.parse_args()
 
-    # Env fallback for CDP URL so the container doesn't need to pass it
-    # on every command line.
     if args.cdp_url is None:
         args.cdp_url = os.environ.get("IG_CDP_URL")
 
-    # Cap scrolls so total scroll time can't exceed the account timeout.
     effective_scrolls = min(
         args.max_scrolls,
         max(1, (args.timeout - 10) // (SCROLL_WAIT_MS // 1000)),
     )
 
-    # CDP mode implies session.
     session_on = bool(args.cdp_url) or getattr(args, "session", False)
 
     cfg = Config(

@@ -1,13 +1,13 @@
 """
 Probe the Chrome container's CDP endpoint before a fetch run.
-Exit 0 if reachable, 2 if not (so cron / schedulers can branch on it).
+Exit 0 if reachable, 2 if not.
 """
 import json
 import os
 import sys
 import urllib.request
 
-URL = os.environ.get("IG_CDP_URL", "http://ig-reel-chrome:9222") + "/json/version"
+URL = os.environ.get("IG_CDP_URL", "http://127.0.0.1:9222") + "/json/version"
 
 
 def main():
