@@ -1,0 +1,72 @@
+name: ig-reel
+
+networks:
+  ig-reel-net:
+    name: ig-reel-net
+    driver: bridge
+
+volumes:
+  ig-reel-chrome:
+    name: ig-reel-chrome
+
+services:
+  chrome:
+    build:
+      context: ./chrome
+      dockerfile: Dockerfile
+    image: ig-reel-chrome:latest
+    container_name: ig-reel-chrome
+    restart: unless-stopped
+    networks: [ig-reel-net]
+    volumes:
+      - ig-reel-chrome:/home/chrome/profile
+    shm_size: "1gb"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:9222/json/version"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ig-reel-scraper:latest
+    container_name: ig-reel-api
+    restart: unless-stopped
+    networks: [ig-reel-net]
+    depends_on:
+      chrome:
+        condition: service_healthy
+    environment:
+      - IG_CDP_URL=http://ig-reel-chrome:9222
+      - IG_STATE=/app/ig_state.json
+      - IG_OUT_DIR=/app/out
+      - IG_TIMEOUT=150
+    volumes:
+      - ./secrets/ig_state.json:/app/ig_state.json
+      - ./out:/app/out
+    # Publish to localhost only -- nginx-proxy or whatever fronts this
+    # can bind externally. Do not bind 0.0.0.0 in production.
+    ports:
+      - "127.0.0.1:8099:8000"
+    command: ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8000"]
+
+  scraper:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ig-reel-scraper:latest
+    container_name: ig-reel-scraper
+    networks: [ig-reel-net]
+    depends_on:
+      chrome:
+        condition: service_healthy
+    environment:
+      - IG_CDP_URL=http://ig-reel-chrome:9222
+    volumes:
+      - ./secrets/ig_state.json:/app/ig_state.json
+      - ./reels.txt:/app/reels.txt:ro
+      - ./out:/app/out
+    command: ["--help"]
